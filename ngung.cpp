@@ -4,14 +4,13 @@
 #include <string>
 #include <thread>
 #include <atomic>
-#include <vector>
 
-#pragma comment(lib, "Ws2_32.lib") // Liên kết thư viện Winsock
+std::atomic<int> activeThreads(0);
+
+#pragma comment(lib, "Ws2_32.lib") // -lws2_32
 
 #define PORT 8080
 #define BUFFER_SIZE 4096
-
-std::atomic<int> activeThreads(0); // Đếm số luồng đang hoạt động
 
 void initWinsock() {
     WSADATA wsaData;
@@ -54,13 +53,14 @@ void startListening(SOCKET listenSocket) {
     }
     std::cout << "Proxy server started. Listening on port " << PORT << "...\n";
 }
+
 std::string parseHttpRequest(const std::string& request) {
     size_t pos = request.find("Host: ");
     if (pos == std::string::npos) return "";
     size_t start = pos + 6;
     size_t end = request.find("\r\n", start);
     if (end == std::string::npos) return "";
-    return request.substr(start, end - start); // Trả về host mà client muốn kết nối
+    return "https://" + request.substr(start, end - start);
 }
 
 void handleConnectMethod(SOCKET clientSocket, const std::string& host, int port) {
@@ -107,16 +107,19 @@ void handleConnectMethod(SOCKET clientSocket, const std::string& host, int port)
                 int receivedBytes = recv(clientSocket, buffer, BUFFER_SIZE, 0);
                 if (receivedBytes <= 0) break;
                 send(remoteSocket, buffer, receivedBytes, 0);
+                // std::cerr << receivedBytes << '\n';
             }
             if (FD_ISSET(remoteSocket, &readfds)) {
                 int receivedBytes = recv(remoteSocket, buffer, BUFFER_SIZE, 0);
                 if (receivedBytes <= 0) break;
                 send(clientSocket, buffer, receivedBytes, 0);
+                // std::cerr << receivedBytes << '\n';
             }
         } else break;
     }
     closesocket(remoteSocket);
 }
+
 void handleClient(SOCKET clientSocket) {
     activeThreads++;
     std::cout << "Active Threads: " << activeThreads.load() << std::endl;
@@ -124,22 +127,25 @@ void handleClient(SOCKET clientSocket) {
     int receivedBytes = recv(clientSocket, buffer, BUFFER_SIZE, 0);
     if (receivedBytes > 0) {
         std::string request(buffer, receivedBytes);
-        std::string host = parseHttpRequest(request);
-        
-        if (!host.empty()) {
-            std::cerr << "Client is trying to access: " << host << '\n';
-            size_t colonPos = host.find(':');
-            std::string hostname = host.substr(0, colonPos);
-            int port = 443; // Mặc định HTTPS dùng cổng 443
-            if (colonPos != std::string::npos) {
-                port = std::stoi(host.substr(colonPos + 1));
-            }
-            handleConnectMethod(clientSocket, hostname, port);
+        std::string url = parseHttpRequest(request);
+
+        if (!url.empty()) {
+            std::cerr << "Accessed URL: " << url << '\n';
+            size_t hostPos = request.find(' ') + 1;
+            if (std::string(url.begin() + 7, url.end()).find(':') == std::string::npos) return;
+            size_t portPos = request.find(':', hostPos);
+            std::string host = request.substr(hostPos, portPos - hostPos);
+            int port = stoi(request.substr(portPos + 1, request.find(' ', portPos) - portPos - 1));
+            handleConnectMethod(clientSocket, host, port);
         }
+
+        // Forward the request to target server (not implemented in this example)
+        // and send the response back to the client.
     }
     activeThreads--;
     closesocket(clientSocket);
 }
+
 int main() {
     initWinsock();
     SOCKET listenSocket = createSocket();
@@ -149,8 +155,9 @@ int main() {
     while (true) {
         SOCKET clientSocket = accept(listenSocket, NULL, NULL);
         if (clientSocket != INVALID_SOCKET) {
+            // Launch a new thread to handle each client connection
             std::thread clientThread(handleClient, clientSocket);
-            clientThread.detach(); // Tạo luồng mới để xử lý từng client
+            clientThread.detach(); // Detach the thread to run independently
         }
     }
 
