@@ -102,7 +102,10 @@ void handleConnectMethod(SOCKET clientSocket, const std::string& host, int port)
         FD_ZERO(&readfds);
         FD_SET(clientSocket, &readfds);
         FD_SET(remoteSocket, &readfds);
-        if (select(0, &readfds, NULL, NULL, NULL) > 0) {
+        timeval timeout;
+        timeout.tv_sec = 5;
+        timeout.tv_usec = 0;
+        if (select(0, &readfds, NULL, NULL, &timeout) > 0) {
             if (FD_ISSET(clientSocket, &readfds)) {
                 int receivedBytes = recv(clientSocket, buffer, BUFFER_SIZE, 0);
                 if (receivedBytes <= 0) break;
@@ -156,8 +159,9 @@ int main() {
         SOCKET clientSocket = accept(listenSocket, NULL, NULL);
         if (clientSocket != INVALID_SOCKET) {
             // Launch a new thread to handle each client connection
-            std::thread clientThread(handleClient, clientSocket);
-            clientThread.detach(); // Detach the thread to run independently
+            // std::thread clientThread(handleClient, clientSocket);
+            // clientThread.detach(); // Detach the thread to run independently
+            handleClient(clientSocket);
         }
     }
 
